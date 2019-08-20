@@ -160,15 +160,14 @@ Resources:
           - logs:DescribeLogStreams
           - logs:CreateLogGroup
           - logs:Create*
-          - s3:GetObject
-          Resource:
-            Fn::Join:
-            - ''
-            - - 'arn:aws:logs:'
-              - !Ref AWS::Region
-              - ":"
-              - !Ref CloudWatchLogsGroup
-              - ":log-stream:*"
+          Resource: "*"
+            # Fn::Join:
+            # - ''
+            # - - 'arn:aws:logs:'
+            #   - !Ref AWS::Region
+            #   - ":"
+            #   - !Ref CloudWatchLogsGroup
+            #   - ":log-stream:*"
 
   IamInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -241,7 +240,7 @@ Resources:
           ec2_setup:
             - custom_index_page
             - install_packages
-            - config_wordpress
+            - config_nginx
             - config_cloudlog_config
             - config_php_fpm
             - config_cloudwatch_agent
@@ -267,58 +266,67 @@ Resources:
               command: "apt-get install -y htop vim mlocate git nginx php7.2-fpm php7.2-gd"
             02_create_www:
               command: "mkdir -p /var/www/html/custom"
-            03_copy_indexpage:
+            03_create_nginx_user:
+              command: "useradd nginx"
+            04_changeto_nginx:
+              command: "sed -i 's/www-data/nginx/g' /etc/nginx/nginx.conf"
+            05_copy_indexpage:
               command: "cp /tmp/index.php /var/www/html/custom/"
-            03_chmod_wordpress:
+            06_chmod_user:
               cwd: /var/www/html/
-              command: "chown -R nginx:nginx /var/www/html/custom"
-        config_wordpress:
+              command: "chown -R nginx:nginx custom/"
+            07_remove_file:
+              command: "rm -f /etc/nginx/sites-enabled/default"
+        config_nginx:
           files:
             "/etc/nginx/sites-enabled/default":
               content: !Sub |
                 server {
-                        listen 80;
-                        server_name app.test.com;
-                        root   /var/www/html/custom;
-                        index index.php index.html index.htm;
-                        #access_log /var/log/nginx/wordpress_access.log;
-                        #error_log /var/log/nginx/wordpress_error.log;
+                  listen 80;
+                  server_name app.test.com;
+                  root   /var/www/html/custom;
+                  index index.php index.html index.htm;
+                  #access_log /var/log/nginx/wordpress_access.log;
+                  #error_log /var/log/nginx/wordpress_error.log;
 
-                        location / {
-                            if ($http_x_forwarded_proto != 'https') {
-                                    rewrite ^ https://$host$request_uri? permanent;
-                            }
-                            try_files $uri $uri/ @handler;
-                        }
+                  location / {
+                      #if ($http_x_forwarded_proto != 'https') {
+                      #        rewrite ^ https://$host$request_uri? permanent;
+                      #}
+                      try_files $uri $uri/ @handler;
+                  }
 
-                        location @handler {
-                            fastcgi_pass 127.0.0.1:9000;
-                            fastcgi_param SCRIPT_FILENAME /var/www/html/custom/index.php;
-                            include /etc/nginx/fastcgi_params;
-                            fastcgi_param SCRIPT_NAME /index.php;
-                        }
+                  location @handler {
+                      fastcgi_pass unix:/run/php/php7.2-fpm.sock;
+                      fastcgi_param SCRIPT_FILENAME /var/www/html/custom/index.php;
+                      include /etc/nginx/fastcgi_params;
+                      fastcgi_param SCRIPT_NAME /index.php;
+                  }
 
-                        location ~ .php$ {
-                            try_files $uri @handler;
-                            fastcgi_pass    127.0.0.1:9000;
-                            fastcgi_index   index.php;
-                            fastcgi_param SCRIPT_FILENAME /var/www/html/custom$fastcgi_script_name;
-                            include fastcgi_params;
-                        }
+                  location ~ .php$ {
+                      try_files $uri @handler;
+                      fastcgi_pass    unix:/run/php/php7.2-fpm.sock;
+                      fastcgi_index   index.php;
+                      fastcgi_param SCRIPT_FILENAME /var/www/html/custom$fastcgi_script_name;
+                      include fastcgi_params;
+                  }
 
-                        # Plugin Handles This
-                        #location = /favicon.ico { access_log off; log_not_found off; }
 
-                        # Plugin Handles This
-                        #location = /robots.txt { access_log off; log_not_found off; allow all; }
 
-                        #    Prevent access to any files starting with a dot, like .htaccess or text editor temp files
-                        location ~ /\. { access_log off; log_not_found off; deny all; }
+                  # Plugin Handles This
+                  #location = /favicon.ico { access_log off; log_not_found off; }
 
-                        location ~* /(?:uploads|files)/.*\.php$ {
-                            deny all;
-                        }
+                  # Plugin Handles This
+                  #location = /robots.txt { access_log off; log_not_found off; allow all; }
+
+                  #    Prevent access to any files starting with a dot, like .htaccess or text editor temp files
+                  #location ~ /\. { access_log off; log_not_found off; deny all; }
+
+                  #location ~* /(?:uploads|files)/.*\.php$ {
+                  #   deny all;
+                  #}
                 }
+
               mode: '000644'
               owner: "nginx"
               group: "nginx"
@@ -329,7 +337,7 @@ Resources:
                 [general]
                 state_file= /var/awslogs/agent-state
                 [/var/log/nginx/access_log]
-                file = /var/log/nginx/access_log
+                file = /var/log/nginx/access.log
                 log_group_name = ${CloudWatchLogsGroup}
                 log_stream_name = {instance_id}/nginx.log
                 datetime_format = %d/%b/%Y:%H:%M:%S
@@ -340,27 +348,27 @@ Resources:
         config_php_fpm:
           commands:
             01_replace_apache_with_nginx_user:
-              command: "sed -i 's/apache/nginx/g' /etc/php-fpm-7.2.d/www.conf"
+              command: "sed -i 's/www-data/nginx/g' /etc/php/7.2/fpm/pool.d/www.conf"
             02_set_ownership_logs_dir:
-              command: "chown -R nginx:nginx /var/log/php-fpm"
+              command: "chown -R nginx:nginx /var/log/php7.2-fpm.log"
             03_set_ownership_session_dir:
-              command: "chown -R root:nginx /var/lib/php/7.2/" 
+              command: "chown -R root:nginx /var/lib/php/modules/7.2/" 
         start_services:
           commands:
             01_start_php_fpm:
-              command: "service php-fpm-7.2 restart"
+              command: "systemctl restart php7.2-fpm"
             02_start_nginx:
-              command: "service nginx restart"
+              command: "systemctl restart nginx"
             03_onboot_php_fpm:
-              command: "chkconfig nginx on"
+              command: "systemctl enable php7.2-fpm"
             04_onboot_nginx:
-              command: "chkconfig php-fpm-7.2 on"
+              command: "systemctl enable nginx"
         config_cloudwatch_agent:
           commands:
             01_download_agent:
-              command: "wget https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py /tmp/"
+              command: "cd /tmp/ && wget https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py"
             02_start_agent:
-              command: "python /tmp/awslogs-agent-setup.py -n -r ${AWS::Region} -c /tmp/nginx-cloud.conf  || error_exit 'Failed to run CloudWatch Logs agent setup'"
+              command: !Sub "python /tmp/awslogs-agent-setup.py -n -r ${AWS::Region} -c /tmp/nginx-cloud.conf  || error_exit 'Failed to run CloudWatch Logs agent setup'"
       CreationPolicy:
         ResourceSignal:
           Count: 1
@@ -368,7 +376,7 @@ Resources:
 
 Outputs:
 
-  # Network
+  #Network
   VPC:
     Value: !Ref VPC
   SubnetId:

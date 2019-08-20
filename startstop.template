@@ -2,15 +2,31 @@
     "AWSTemplateFormatVersion" : "2010-09-09",
     "Description"              : "EC2 Instance Start/Stop on Oregon Region",
     "Parameters"               : {
-        "SNSTopicName" : {
-            "Type" : "String",
-            "Description" : "SNS Topic to Send Alerts to"
-        },
+        
         "S3BucketName" : {
             "Type" : "String",
             "Description" : "S3 Bucket Name (S3 Bucket where your Lambda Scripts are located)"
-    }
-},
+        },
+        "ImageId" : {
+            "Type" : "String",
+            "Description" : "Image name"
+        },
+        "InstanceType" : {
+            "Type" : "String",
+            "Description" : "Instance type"
+        },
+        "KeyPairName" : {
+            "Type" : "String",
+            "Description" : "Key name"
+        },
+        "PublicSubnet" : {
+            "Type" : "String",
+            "Description" : "PublicSubnet Name"
+        }
+
+
+
+    },
     "Resources"                : {
         "EC2StartStopOregonRole" : {
             "Type" : "AWS::IAM::Role",
@@ -22,7 +38,8 @@
                             "Effect" : "Allow",
                             "Principal" : {
                                 "Service" : [
-                                    "lambda.amazonaws.com"
+                                    "lambda.amazonaws.com",
+                                    "events.amazonaws.com"
                                 ]
                             },
                             "Action"    : [
@@ -125,26 +142,78 @@
                 "MemorySize" : 128
             }
         },
-        "EC2 Instance" : {
+        "EC2Instance" : {
             "Type" : "AWS::EC2::Instance",
-            "ImageId" : {
+            "Properties" : {
+              "ImageId" : {
                 "Ref" : "ImageId"
-            },
-            "InstanceType" : {
+              },
+              "InstanceType" : {
                 "Ref" : "InstanceType"
-            },
-            "KeyName" : {
-                "Ref" : "KeyName"
-            },
-            "SubnetId" : {
+              },
+              "KeyName" : {
+                "Ref" : "KeyPairName"
+              },
+              "SubnetId" : {
                 "Ref" : "PublicSubnet"
-            },
-            "SecurityGroupIds" : {
-                "Ref" : "SecurityGroup"
-            },
-            "Tags" :  {
+              },
+              "Tags" :  [{
                 "Key" : "AutoStartStop",
                 "Value" : "TRUE"
+              },
+              {
+                "Key" : "Name",
+                "Value" : !Ref "AWS::StackName"
+              }
+              ]
             }
             
+            
+        },
+        "ScheduledRulestop" : {
+            "Type" : "AWS::Events::Rule",
+            "Properties" : {
+              "Description": "ScheduledRule-stop",
+              "ScheduleExpression": "cron(0 22 * * ? *)",
+              "State": "ENABLED",
+              "Name" : "ScheduledRulestop",
+              "Targets" : [{
+                  "Arn": { "Fn::GetAtt": ["StopAllOregonFunction", "Arn"] },
+                  "Id": "StopAllOregonFunction"
+              }]
+            }
+        },
+        "PermissionForEventsToInvokeLambdastop" : {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": { "Ref": "StopAllOregonFunction" },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "events.amazonaws.com",
+              "SourceArn": { "Fn::GetAtt": ["ScheduledRulestop", "Arn"] }
+            }
+        },
+        "ScheduledRulestart" : {
+            "Type" : "AWS::Events::Rule",
+            "Properties" : {
+              "Description": "ScheduledRule-start",
+              "ScheduleExpression": "cron(0 7 * * ? *)",
+              "State": "ENABLED",
+              "Name" : "ScheduledRulestart",
+              "Targets" : [{
+                  "Arn": { "Fn::GetAtt": ["StartAllOregonFunction", "Arn"] },
+                  "Id": "StartAllOregonFunction"
+              }]
+            }
+        },
+        "PermissionForEventsToInvokeLambdastart" : {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": { "Ref": "StartAllOregonFunction" },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "events.amazonaws.com",
+              "SourceArn": { "Fn::GetAtt": ["ScheduledRulestart", "Arn"] }
+            }
         }
+
+    }
+}

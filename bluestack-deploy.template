@@ -1,0 +1,99 @@
+{
+   "AWSTemplateFormatVersion": "2010-09-09",
+   "Description" : "Master template",
+   "Parameters" : {
+                   "KeyPairName" : {
+                       "Default" : "Bluestack_key",
+                       "Type" : "String"
+                   },
+                   "InstanceType" : {
+                       "Default" : "t2.micro",
+                        "Type" : "String"
+                   },
+                   "ImageId" : {
+                       "Default" : "ami-06f2f779464715dc5",
+                       "Type" : "String"
+                   },
+                   "VpcCIDR" : {
+                       "Default" : "10.192.0.0/16",
+                       "Type" : "String"
+                   },
+                   "PublicSubnetCIDR" : {
+                       "Default" : "10.192.10.0/24",
+                       "Type" : "String"
+                   },
+                   "S3BucketName" : {
+                       "Default" : "lambdafunctions3",
+                       "Type" : "String"
+                   }
+   },
+   "Resources": {
+       "ChildStack1": {
+           "Type": "AWS::CloudFormation::Stack",
+           "Properties": {
+               "TemplateURL": "https://s3.amazonaws.com/cloudformationtemplatesbluestack/nginx-php.yaml",
+               "Parameters" : {
+                   "KeyPairName" : {
+                       "Ref" : "KeyPairName"
+                   },
+                   "InstanceType" : {
+                       "Ref" : "InstanceType"
+                   },
+                   "ImageId" : {
+                       "Ref" : "ImageId"
+                   },
+                   "VpcCIDR" : {
+                       "Ref" : "VpcCIDR"
+                   },
+                   "PublicSubnetCIDR" : {
+                       "Ref" : "PublicSubnetCIDR"
+                   }
+               },
+               "TimeoutInMinutes": "300"
+           }
+       },
+       "ChildStack2": {
+           "Type": "AWS::CloudFormation::Stack",
+           "Properties": {
+               "TemplateURL": "https://s3.amazonaws.com/cloudformationtemplatesbluestack/startstop.template",
+               "Parameters": {
+                  "PublicSubnet" : { "Fn::GetAtt" : [ "ChildStack1", "Outputs.SubnetId" ] },
+                  "S3BucketName" : {
+                      "Ref" : "S3BucketName"
+                  },
+                  "KeyPairName" : {
+                       "Ref" : "KeyPairName"
+                   },
+                   "InstanceType" : {
+                       "Ref" : "InstanceType"
+                   },
+                   "ImageId" : {
+                       "Ref" : "ImageId"
+                   }
+               },
+               "TimeoutInMinutes": "60"
+           }
+       }
+   },
+   "Outputs": {
+       "StackRef": {
+           "Value": { "Ref": "ChildStack2" }
+       },
+       "OutputFromNestedStack": {
+           "Value": { "Fn::GetAtt": [ "ChildStack2", "Outputs.SubnetID" ]}
+       },
+       "StackRef": {
+           "Value" : { "Ref": "ChildStack1"}
+       },
+       "OutputFromNestedStack": {
+           "Value": { "Fn::GetAtt": [ "ChildStack1", "Outputs.VPC" ]}
+       },
+       "OutputFromNestedStack": {
+           "Value": { "Fn::GetAtt": [ "ChildStack1", "Outputs.SubnetId" ]}
+       },
+       "OutputFromNestedStack": {
+           "Value": { "Fn::GetAtt": [ "ChildStack1", "Outputs.InstanceURL" ]}
+       }
+
+   }
+}
