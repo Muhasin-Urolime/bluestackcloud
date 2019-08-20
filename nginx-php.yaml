@@ -1,0 +1,393 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Single EC2 Running Wordpress on Nginx, php.
+Parameters:
+
+  # Network
+  VpcCIDR:
+    Type: String
+  PublicSubnetCIDR:
+    Type: String
+
+  # Instance
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+  InstanceType:
+    Type: String
+    AllowedValues:
+    - t2.nano
+    - t2.micro
+    - t2.small
+    - t2.medium
+    - m3.medium
+    - m4.large
+    - c3.medium
+    - c4.medium
+    Default: t2.micro
+  ImageId:
+    Type: AWS::EC2::Image::Id
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+
+      # Network
+      - Label:
+          default: Network
+        Parameters:
+          - VPC
+          - PublicSubnet
+          - SecurityGroup
+          - VpcCIDR
+          - PublicSubnetCIDR
+
+      # Instance Settings
+      - Label:
+          default: Instance
+        Parameters:
+          - KeyPairName
+          - InstanceType
+          - ImageId
+
+    ParameterLabels:      
+      # Network
+      PublicSubnetCIDR:
+        default: Public subnet CIDR
+      VpcCIDR:
+        default: VPC CIDR
+
+
+      # Instance Settings
+      KeyPairName:
+        default: EC2 Key Pair Name
+      InstanceType:
+        default: Instance Type
+      ImageId:
+        default: Image id of ec2
+
+Resources:
+  # CloudWatch
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref "AWS::StackName"
+      RetentionInDays: '30'
+  #VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref "AWS::StackName"
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref "AWS::StackName"
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Ref "AWS::StackName"
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Ref "AWS::StackName"
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+  # IAM
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref AWS::StackName
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+
+  IamPolicies:
+    Type: AWS::IAM::Policy
+    DependsOn: IamRole
+    Properties:
+      PolicyName: !Join [ '', [ !Ref "AWS::StackName", -instance-policy ] ]
+      Roles: [!Ref IamRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        # Allow Write CloudWatch Logs
+        - Effect: Allow
+          Action:
+          - cloudwatch:PutMetricData
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - logs:PutLogEvents
+          - logs:CreateLogStream
+          - logs:DescribeLogStreams
+          - logs:CreateLogGroup
+          - logs:Create*
+          - s3:GetObject
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:logs:'
+              - !Ref AWS::Region
+              - ":"
+              - !Ref CloudWatchLogsGroup
+              - ":log-stream:*"
+
+  IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn: IamRole
+    Properties:
+      Path: "/"
+      Roles: [!Ref IamRole]
+
+  # Security Groups
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Web Traffic to Instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        FromPort: "-1"
+        ToPort: "-1"
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Ref "AWS::StackName"
+
+  # EC2 Instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - SecurityGroup
+      - IamInstanceProfile
+    Properties:
+      IamInstanceProfile: !Ref IamInstanceProfile
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      #ImageId: !FindInMap [ RegionMap, !Ref "AWS::Region", EBS ]
+      ImageId: !Ref ImageId
+      Monitoring: false
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            VolumeType: gp2
+            VolumeSize: 8
+      Tags:
+        - Key: Name
+          Value: !Ref "AWS::StackName"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          apt update -y
+          sudo apt-get -y install python-pip
+          sudo pip install aws-cfn-bootstrap
+          sudo cfn-init -v --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region} --configsets ec2_setup
+          sudo cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          ec2_setup:
+            - custom_index_page
+            - install_packages
+            - config_wordpress
+            - config_cloudlog_config
+            - config_php_fpm
+            - config_cloudwatch_agent
+            - start_services
+        custom_index_page:
+          files:
+            "/tmp/index.php":
+              content: !Sub |
+                  <html>
+                    <head>
+                    <title>PHP Test</title>
+                    </head>
+                    <body>
+                    <?php echo '<p>Hello World</p>'; ?> 
+                    </body>
+                   </html>
+              mode: '000644'
+        install_packages:
+          commands:
+            00_apt_update:
+              command: "apt update -y"
+            01_install_nginx:
+              command: "apt-get install -y htop vim mlocate git nginx php7.2-fpm php7.2-gd"
+            02_create_www:
+              command: "mkdir -p /var/www/html/custom"
+            03_copy_indexpage:
+              command: "cp /tmp/index.php /var/www/html/custom/"
+            03_chmod_wordpress:
+              cwd: /var/www/html/
+              command: "chown -R nginx:nginx /var/www/html/custom"
+        config_wordpress:
+          files:
+            "/etc/nginx/sites-enabled/default":
+              content: !Sub |
+                server {
+                        listen 80;
+                        server_name app.test.com;
+                        root   /var/www/html/custom;
+                        index index.php index.html index.htm;
+                        #access_log /var/log/nginx/wordpress_access.log;
+                        #error_log /var/log/nginx/wordpress_error.log;
+
+                        location / {
+                            if ($http_x_forwarded_proto != 'https') {
+                                    rewrite ^ https://$host$request_uri? permanent;
+                            }
+                            try_files $uri $uri/ @handler;
+                        }
+
+                        location @handler {
+                            fastcgi_pass 127.0.0.1:9000;
+                            fastcgi_param SCRIPT_FILENAME /var/www/html/custom/index.php;
+                            include /etc/nginx/fastcgi_params;
+                            fastcgi_param SCRIPT_NAME /index.php;
+                        }
+
+                        location ~ .php$ {
+                            try_files $uri @handler;
+                            fastcgi_pass    127.0.0.1:9000;
+                            fastcgi_index   index.php;
+                            fastcgi_param SCRIPT_FILENAME /var/www/html/custom$fastcgi_script_name;
+                            include fastcgi_params;
+                        }
+
+                        # Plugin Handles This
+                        #location = /favicon.ico { access_log off; log_not_found off; }
+
+                        # Plugin Handles This
+                        #location = /robots.txt { access_log off; log_not_found off; allow all; }
+
+                        #    Prevent access to any files starting with a dot, like .htaccess or text editor temp files
+                        location ~ /\. { access_log off; log_not_found off; deny all; }
+
+                        location ~* /(?:uploads|files)/.*\.php$ {
+                            deny all;
+                        }
+                }
+              mode: '000644'
+              owner: "nginx"
+              group: "nginx"
+        config_cloudlog_config:
+          files:
+            "/tmp/nginx-cloud.conf":
+              content: !Sub |
+                [general]
+                state_file= /var/awslogs/agent-state
+                [/var/log/nginx/access_log]
+                file = /var/log/nginx/access_log
+                log_group_name = ${CloudWatchLogsGroup}
+                log_stream_name = {instance_id}/nginx.log
+                datetime_format = %d/%b/%Y:%H:%M:%S
+              mode: '000400'
+              owner: nginx
+              group: nginx
+            
+        config_php_fpm:
+          commands:
+            01_replace_apache_with_nginx_user:
+              command: "sed -i 's/apache/nginx/g' /etc/php-fpm-7.2.d/www.conf"
+            02_set_ownership_logs_dir:
+              command: "chown -R nginx:nginx /var/log/php-fpm"
+            03_set_ownership_session_dir:
+              command: "chown -R root:nginx /var/lib/php/7.2/" 
+        start_services:
+          commands:
+            01_start_php_fpm:
+              command: "service php-fpm-7.2 restart"
+            02_start_nginx:
+              command: "service nginx restart"
+            03_onboot_php_fpm:
+              command: "chkconfig nginx on"
+            04_onboot_nginx:
+              command: "chkconfig php-fpm-7.2 on"
+        config_cloudwatch_agent:
+          commands:
+            01_download_agent:
+              command: "wget https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py /tmp/"
+            02_start_agent:
+              command: "python /tmp/awslogs-agent-setup.py -n -r ${AWS::Region} -c /tmp/nginx-cloud.conf  || error_exit 'Failed to run CloudWatch Logs agent setup'"
+      CreationPolicy:
+        ResourceSignal:
+          Count: 1
+          Timeout: PT20M
+
+Outputs:
+
+  # Network
+  VPC:
+    Value: !Ref VPC
+  SubnetId:
+    Value: !Ref PublicSubnet
+  SecurityGroup:
+    Value: !Ref SecurityGroup
+  InstanceURL:
+    Value: !Join [ "", [ "http://", !GetAtt EC2Instance.PrivateDnsName ] ]
+
+  # Instance Settings
+  AMI:
+    Description: AMI Used.
+    Value: !Ref ImageId
+  InstanceType:
+    Description: Instance Type Used.
+    Value: !Ref InstanceType
+  KeyPairName:
+    Description: Key Pair Name Used.
+    Value: !Ref KeyPairName
+  IAMRole:
+    Description: IAM Instance Profile Role Created.
+    Value: !Ref IamRole

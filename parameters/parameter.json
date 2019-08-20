@@ -1,0 +1,24 @@
+[
+    {
+      "ParameterKey": "KeyPairName",
+      "ParameterValue": "Bluestack_test"
+    },
+    {
+      "ParameterKey": "InstanceType",
+      "ParameterValue": "t2.micro"
+    },
+    {
+      "ParameterKey": "ImageId",
+      "ParameterValue": "ami-06f2f779464715dc5"
+
+    },
+    {
+        "ParameterKey": "VpcCIDR",
+        "ParameterValue": "10.192.0.0/16"
+  
+    },
+    {
+        "ParameterKey": "PublicSubnetCIDR",
+        "ParameterValue": "10.192.10.0/24"
+    }
+]

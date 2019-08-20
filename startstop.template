@@ -1,0 +1,150 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+    "Description"              : "EC2 Instance Start/Stop on Oregon Region",
+    "Parameters"               : {
+        "SNSTopicName" : {
+            "Type" : "String",
+            "Description" : "SNS Topic to Send Alerts to"
+        },
+        "S3BucketName" : {
+            "Type" : "String",
+            "Description" : "S3 Bucket Name (S3 Bucket where your Lambda Scripts are located)"
+    }
+},
+    "Resources"                : {
+        "EC2StartStopOregonRole" : {
+            "Type" : "AWS::IAM::Role",
+            "Properties" : {
+                "AssumeRolePolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Principal" : {
+                                "Service" : [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action"    : [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path"                     : "/"
+            }
+        },
+        "EC2StartStopOregonPolicy" : {
+            "DependsOn" : [
+                "EC2StartStopOregonRole"
+            ],
+            "Type"      : "AWS::IAM::Policy",
+            "Properties" : {
+                "PolicyName" : "ec2-startstop-Oregon-role",
+                "Roles"      : [
+                    {
+                        "Ref" : "EC2StartStopOregonRole"
+                    }
+                ],
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "logs:*"
+                            ],
+                            "Resource" : [
+                                "arn:aws:logs:*:*:*"
+                            ]
+                        },
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                              "ec2:DescribeInstanceAttribute",
+                              "ec2:DescribeInstanceStatus",
+                              "ec2:DescribeInstances",
+                              "ec2:StartInstances",
+                              "ec2:StopInstances"
+                            ],
+                            "Resource" : [
+                                "*"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "StartAllOregonFunction" : {
+            "Type" : "AWS::Lambda::Function",
+            "DependsOn" : [
+                "EC2StartStopOregonRole",
+                "EC2StartStopOregonPolicy"
+            ],
+            "Properties" : {
+                "Code" : {
+                    "S3Bucket" : {
+                        "Ref" : "S3BucketName"
+                    },
+                    "S3Key"    : "ec2-startstop.zip"
+                },
+                "Role" : {
+                    "Fn::GetAtt" : [
+                        "EC2StartStopOregonRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout" : 60,
+                "Handler" : "start_all.lambda_handler",
+                "Runtime" : "python2.7",
+                "MemorySize" : 128
+            }
+        },
+        "StopAllOregonFunction" : {
+            "Type" : "AWS::Lambda::Function",
+            "DependsOn" : [
+                "EC2StartStopOregonRole",
+                "EC2StartStopOregonPolicy"
+            ],
+            "Properties" : {
+                "Code" : {
+                    "S3Bucket" : {
+                        "Ref" : "S3BucketName"
+                    },
+                    "S3Key"    : "ec2-startstop.zip"
+                },
+                "Role" : {
+                    "Fn::GetAtt" : [
+                        "EC2StartStopOregonRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout" : 60,
+                "Handler" : "stop_all.lambda_handler",
+                "Runtime" : "python2.7",
+                "MemorySize" : 128
+            }
+        },
+        "EC2 Instance" : {
+            "Type" : "AWS::EC2::Instance",
+            "ImageId" : {
+                "Ref" : "ImageId"
+            },
+            "InstanceType" : {
+                "Ref" : "InstanceType"
+            },
+            "KeyName" : {
+                "Ref" : "KeyName"
+            },
+            "SubnetId" : {
+                "Ref" : "PublicSubnet"
+            },
+            "SecurityGroupIds" : {
+                "Ref" : "SecurityGroup"
+            },
+            "Tags" :  {
+                "Key" : "AutoStartStop",
+                "Value" : "TRUE"
+            }
+            
+        }
